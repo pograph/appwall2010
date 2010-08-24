@@ -4,176 +4,213 @@
 Your own app wall. v1.1
 pograph.wordpress.com
 """
+import imageutil
+import apputil
 import pygame
 from pygame.locals import *
-import Image
-
-import feedparser
-import re, os, sys, urllib, copy, random
+import pymunk
+from pymunk import Vec2d
+import re, os, sys, copy, random
 from math import *
 from time import time
 
-app_rss_urls = ('http://ax.itunes.apple.com/WebObjects/MZStoreServices.woa/ws/RSS/toppaidapplications/sf=143441/limit=300/xml',
-                'http://ax.itunes.apple.com/WebObjects/MZStoreServices.woa/ws/RSS/toppaidapplications/sf=143441/limit=300/genre=6014/xml',
-                'http://ax.itunes.apple.com/WebObjects/MZStoreServices.woa/ws/RSS/toppaidapplications/sf=143441/limit=300/genre=6016/xml',
-                'http://ax.itunes.apple.com/WebObjects/MZStoreServices.woa/ws/RSS/topfreeapplications/sf=143441/limit=300/genre=6005/xml',
-                'http://ax.itunes.apple.com/WebObjects/MZStoreServices.woa/ws/RSS/topfreeapplications/sf=143441/limit=300/genre=6014/xml')
+
 ICON_DIR = 'icons'
 ICON_HEIGHT = 53
 ICON_WIDTH = 53
+ICON_MASS = 1.0
+ICON_MOMENT = 100.0
+GRAVITITY = -300.0
 
-icon_pattern = re.compile('<img.* src=\"(.*100x100-75\.jpg)\"')
-grid_width = 0
-grid_height = 0
-
-def id_to_xy(id):
-    return id % grid_width, id / grid_width
-
-def xy_to_id(x, y):
-    return x + y * grid_width
-
-def download_icons(url):
-    """ download icons from Apple appstore """
-    feed = feedparser.parse(url)
-    for item in feed.entries:
-        match = icon_pattern.search(item.content[0].value)
-        if match:
-            icon_url = match.groups()[0]    # extract icon link
-            icon_url = icon_url.replace('100x100', '53x53')                        # get the smallest one
-            icon_file = os.path.join('icons', icon_url.rpartition('/')[2])
-            if not os.path.exists(icon_file):
-                print icon_url, ' => ', icon_file
-                urllib.urlretrieve(icon_url, icon_file)
+STATE_DROPPING=1
+STATE_FALLING=2
 
 class Icon(pygame.sprite.Sprite):
-    def __init__(self, filename):
+    def __init__(self, game, filename):
         pygame.sprite.Sprite.__init__(self)
+        self.game = game
 
-        # load image and add alpha channel
-        rgb_chan = Image.open(filename).split()
-        alpha_chan = Image.open('template.png').split()
-        if len(rgb_chan) >= 3:
-            image = Image.merge('RGBA', (rgb_chan[0], rgb_chan[1], rgb_chan[2], alpha_chan[0]))
-        else:
-            image = Image.merge('RGBA', (rgb_chan[0], rgb_chan[0], rgb_chan[0], alpha_chan[0]))
-
-        # convert to pygame image
+        self.body = pymunk.Body(ICON_MASS, ICON_MOMENT)
+        a = ICON_WIDTH / 2.0
+        self.shape = pymunk.Poly(self.body, [Vec2d(-a, -a), Vec2d(-a, a), Vec2d(a, a), Vec2d(a, -a)])
+        self.in_space = False;
+ 
+        # load icon, add alpha channel, and convert to pygame image
+        image = imageutil.load_and_add_alpha(filename)
         image2 = pygame.image.fromstring(image.tostring(), image.size, 'RGBA')
         self.image = image2.convert_alpha()
         self.rect = self.image.get_rect()
-        self.orig_rect = copy.deepcopy(self.rect)
-        self.z = 0
+        self.set_position(0.0, 0.0)
+        self.col = 0
 
-    def update_pos(self):
-        """ fake 3D effect """
-        self.rect.left = self.orig_rect.left + self.z * -0.866 * 50
-        self.rect.top = self.orig_rect.top + self.z * -0.5 * 50
+    def set_position(self, x, y):
+        self.body.position.x = x
+        self.body.position.y = y
+        self.update()
 
-def load_files(files):
-    img_ext = ('.jpg')
-    sprites = []
-    print "Loading icons"
-    for f in files:
-        if len(sprites) == grid_width * grid_height:
-            return sprites
-        if f[-4:] in img_ext:
-            try:
-                sprites.append(Icon(os.path.join('icons', f)))
-            except:
-                print "ignore error on parsing ", f
-                print sys.exc_info()
-                pass
-    return sprites
+    def update(self):
+        if(self.in_space and self.body.position.y < -ICON_HEIGHT):
+            self.game.space.remove(self.shape, self.body)
+            self.in_space = False
+            self.game.sprite_cols[self.col].remove(self)
+            self.game.sprite_bucket.append(self)
+            self.game.sprites_on_ground -= 1
 
-def assign_sprites(sprites):
-    for i in range(len(sprites)):
-        sprites[i].id = i;
-        sprites[i].rect.top = (i / grid_width) * ICON_HEIGHT
-        sprites[i].rect.left = (i % grid_width) * ICON_WIDTH
-        sprites[i].orig_rect = copy.deepcopy(sprites[i].rect)
-        sprites[i].x, sprites[i].y = id_to_xy(i)
+        self.rect.top = int(self.game.screen_height - self.body.position.y - ICON_WIDTH / 2.0)
+        self.rect.left = int(self.body.position.x - ICON_HEIGHT / 2.0)
 
-def main():
-    global grid_width, grid_height
-    print "Welcome to your own App Wall."
+    def render(self):
+        if(self.in_space):
+            self.game.screen.blit(self.image, self.rect)
 
-    pygame.init()
+    def drop(self, col):
+        self.col = col
+        self.set_position((col + 0.5) * ICON_WIDTH, self.game.drop_height)
+        self.game.space.add(self.body, self.shape)
+        self.in_space = True
 
-    # init grid
-    info = pygame.display.Info()
-    grid_width = info.current_w / ICON_WIDTH + 1
-    grid_height = info.current_h / ICON_HEIGHT + 1
-    icons_needed = grid_width * grid_height
+    def fall(self):
+        pass
 
-    # init
-    clock = pygame.time.Clock()
-    rand = random.Random()
-    start_time = time()
-    last_change_time = start_time
+class Game:
+    def __init__(self):
+        self.frame = 0;
 
-    # download icons if necessary
-    if not os.path.exists(ICON_DIR):
-        os.mkdir(ICON_DIR)
+        pygame.init()
+        self.clock = pygame.time.Clock()
+        pymunk.init_pymunk()
+        self.space = pymunk.Space()
+        self.space.gravity = (0.0, GRAVITITY)
 
-    files = os.listdir('icons')
-    if len(files) < icons_needed:
-        print "Downloading icons..."
-        for url in app_rss_urls:
-            download_icons(url)
-        files = os.listdir('icons')
 
-    if len(files) < icons_needed:
-        raise SystemExit, "not enough icons"
-
-    # turn into fullscreen mode
-    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-    pygame.mouse.set_visible(False)
-
-    # create a black image, use it to simulate lighting effects
-    #black_image = pygame.Surface((ICON_WIDTH, ICON_HEIGHT))
-    #black_image = black_image.convert()
-    #black_image.fill((0, 0, 0))
-
-    # load icons
-    sprites = load_files(files)
-    if len(sprites) < icons_needed:
-        raise SystemExit, "not enough icons"
+        # turn into fullscreen mode
+        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        pygame.mouse.set_visible(False)
         
-    random.shuffle(sprites)
-    assign_sprites(sprites)
+        info = pygame.display.Info()
+        self.screen_width, self.screen_height = info.current_w, info.current_h
+        self.grid_width = info.current_w / ICON_WIDTH + 1
+        self.grid_height = info.current_h / ICON_HEIGHT + 1
+        self.drop_height = self.screen_height + 1000
 
-    while 1:
-        clock.tick(60)
-        tnow = time()
-        for s in sprites:
-            s.z = 0
+        # load icons
+        self._load_sprites()
 
-        if tnow - last_change_time > 3600:    # re arrange icons every 1 hr
-            del waves[:]
-            random.shuffle(sprites)
-            assign_sprites(sprites)
-            last_change_time = tnow
+        self.sprite_bucket = self.sprites[:]
+        self.sprites_on_ground = 0
+        self.cols = []
+        self.sprite_cols = []
+        for i in range(self.grid_width):
+            self.sprite_cols.append([])
 
-        for s in sprites:
-            s.update_pos()
+        # create a ground
+        GROUND_LEVEL = 0.0
+        self.ground_body = pymunk.Body(pymunk.inf, pymunk.inf)
+        self.ground_body.position = Vec2d(0.0, GROUND_LEVEL)
+        self.ground_shape = pymunk.Segment(self.ground_body, Vec2d(-10000.0, GROUND_LEVEL), Vec2d(10000.0, GROUND_LEVEL), 1.0)
 
-        # draw sprites
+        for i in range(self.grid_width + 1):
+            body = pymunk.Body(pymunk.inf, pymunk.inf)
+            line = pymunk.Segment(body, Vec2d(i * ICON_WIDTH, GROUND_LEVEL), Vec2d(i * ICON_WIDTH, GROUND_LEVEL + 10000.0), 0.0)
+            self.space.add_static(line)
+        self._init_drop()
 
-        screen.fill((0, 0, 0))
-        for s in sprites:
-            screen.blit(s.image, s.rect)
-            # draw black image above sprite to simulate lighting
-            #black_image.set_alpha(z_to_alpha(s.z))
-            #screen.blit(black_image, s.rect)
 
-        # process events
-        for event in pygame.event.get():
-            if event.type == QUIT:
+    def run(self):
+        while 1:
+            self._update_state()
+
+            for s in self.sprites:
+                s.update()
+
+            self._render()
+            self.clock.tick(60)
+            self.space.step(1/60.0)
+
+            # process events
+            for event in pygame.event.get():
+                if event.type == QUIT:
+                    return
+                elif event.type == KEYDOWN and event.key == K_ESCAPE:
+                    return
+            pygame.display.flip()
+            self.frame += 1
+
+
+    def _load_sprites(self):
+        icons_needed = self.grid_width * self.grid_height
+        # download icons if necessary
+        if not os.path.exists(ICON_DIR):
+            os.mkdir(ICON_DIR)
+
+        files = os.listdir('icons')
+        if len(files) < icons_needed:
+            apputil.download_all_icons()
+            files = os.listdir('icons')
+
+        if len(files) < icons_needed:
+            raise SystemExit, "not enough icons"
+
+        self._load_files(files)
+        if(len(self.sprites) < icons_needed):
+            raise SystemExit, "not enough icons"
+
+
+    def _load_files(self, files):
+        img_ext = ('.jpg')
+        self.sprites = []
+        print "Loading icons"
+        icons_needed = self.grid_width * self.grid_height
+        for f in files:
+            if len(self.sprites) == icons_needed:
                 return
-            elif event.type == KEYDOWN and event.key == K_ESCAPE:
+            if f[-4:] in img_ext:
+                try:
+                    self.sprites.append(Icon(self, os.path.join('icons', f)))
+                except:
+                    print "ignore error on parsing ", f
+                    print sys.exc_info()
+                    pass
+
+
+    def _init_drop(self):
+        self.cols = range(self.grid_width)[:]
+        self.space.add_static(self.ground_shape)
+        self.state = STATE_DROPPING
+
+    def _init_fall(self):
+        self.cols = range(self.grid_width)[:]
+        self.space.remove_static(self.ground_shape)
+        self.state = STATE_FALLING
+
+    def _update_state(self):
+        if(self.state == STATE_DROPPING):
+            if(len(self.sprite_bucket) == 0):
+                self._init_fall()
                 return
 
-        pygame.display.flip()
+            # drop a icon randomly
+            if(random.randint(0, 100) % 10 == 0):
+                icon = self.sprite_bucket.pop()
+                col = random.choice(self.cols)
+                self.sprite_cols[col].append(icon)
+                if(len(self.sprite_cols[col]) == self.grid_height):
+                    self.cols.remove(col)
+                self.sprites_on_ground += 1
+                icon.drop(col)
+
+        elif(self.state == STATE_FALLING):
+            if(self.sprites_on_ground == 0):
+                self._init_drop()
+                return
+        
+    def _render(self):
+        self.screen.fill((0, 0, 0))
+        for s in self.sprites:
+            s.render()
+
 
 if __name__ == '__main__':
-    main()
+    print "Welcome to your own App Wall."
+    g = Game()
+    g.run()
