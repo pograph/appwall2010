@@ -2,7 +2,7 @@
 
 # To change this template, choose Tools | Templates
 # and open the template in the editor.
-import re
+import re, os, urllib
 import feedparser
 
 __author__="pwang"
@@ -26,13 +26,6 @@ def download_icons(url, base_dir):
             icon_url = icon_url.replace('100x100', '53x53')                        # get the smallest one
             icon_file = os.path.join(base_dir, icon_url.rpartition('/')[2])
             if not os.path.exists(icon_file):
-                print icon_url, ' => ', icon_file
+                #print icon_url, ' => ', icon_file
                 urllib.urlretrieve(icon_url, icon_file)
-
-def download_all_icons():
-    print "Downloading icons..."
-    for url in app_rss_urls:
-        download_icons(url)
-
-if __name__ == "__main__":
-    print "Hello World";
+                yield 1

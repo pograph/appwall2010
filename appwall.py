@@ -81,21 +81,23 @@ class Game:
         pymunk.init_pymunk()
         self.space = pymunk.Space()
         self.space.gravity = (0.0, GRAVITITY)
-
-
-        # turn into fullscreen mode
-        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-        pygame.mouse.set_visible(False)
         
         info = pygame.display.Info()
         self.screen_width, self.screen_height = info.current_w, info.current_h
         self.grid_width = info.current_w / ICON_WIDTH + 1
         self.grid_height = info.current_h / ICON_HEIGHT + 1
         self.drop_height = self.screen_height + 1000
+        
+        # turn into fullscreen mode
+        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        pygame.mouse.set_visible(False)
+
+        self.font = pygame.font.Font(None, 17)
 
         # load icons
+        self._load_files()
         self._load_sprites()
-
+        
         self.sprite_bucket = self.sprites[:]
         self.sprites_on_ground = 0
         self.cols = []
@@ -137,7 +139,7 @@ class Game:
             self.frame += 1
 
 
-    def _load_sprites(self):
+    def _load_files(self):
         icons_needed = self.grid_width * self.grid_height
         # download icons if necessary
         if not os.path.exists(ICON_DIR):
@@ -145,22 +147,26 @@ class Game:
 
         files = os.listdir('icons')
         if len(files) < icons_needed:
-            apputil.download_all_icons()
+            self._show_text('Downloading icons ...')
+            cnt = 0;
+            for url in apputil.app_rss_urls:
+                for i in apputil.download_icons(url, 'icons'):
+                    cnt += 1
+                    self._show_text('Downloading icons ... %d' % cnt)
+            self._show_text("")
             files = os.listdir('icons')
 
         if len(files) < icons_needed:
             raise SystemExit, "not enough icons"
 
-        self._load_files(files)
-        if(len(self.sprites) < icons_needed):
-            raise SystemExit, "not enough icons"
 
-
-    def _load_files(self, files):
+    def _load_sprites(self):
         img_ext = ('.jpg')
         self.sprites = []
         print "Loading icons"
         icons_needed = self.grid_width * self.grid_height
+        files = os.listdir('icons')
+        random.shuffle(files)
         for f in files:
             if len(self.sprites) == icons_needed:
                 return
@@ -170,7 +176,8 @@ class Game:
                 except:
                     print "ignore error on parsing ", f
                     print sys.exc_info()
-                    pass
+        if(len(self.sprites) < icons_needed):
+            raise SystemExit, "not enough icons"
 
 
     def _init_drop(self):
@@ -209,6 +216,13 @@ class Game:
         for s in self.sprites:
             s.render()
 
+    def _show_text(self, msg):
+        text = self.font.render(msg, True, (255, 255, 255), (0, 0, 0))
+        rect = text.get_rect()
+        rect.centerx = self.screen.get_rect().centerx
+        rect.centery = self.screen.get_rect().centery
+        self.screen.blit(text, rect)
+        pygame.display.update()
 
 if __name__ == '__main__':
     print "Welcome to your own App Wall."
